@@ -26,3 +26,11 @@ npm-*
 
 # for act
 .secrets
+
+# IDEs and environments
+.env
+.env.*
+.vscode/
+.idea/
+*.local
+

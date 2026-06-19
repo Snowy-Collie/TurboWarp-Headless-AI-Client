@@ -32,6 +32,15 @@ const base = {
     mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
     devtool: process.env.SOURCEMAP || (process.env.NODE_ENV === 'production' ? false : 'cheap-module-source-map'),
     devServer: {
+        before () {
+            try {
+                /* eslint-disable-next-line global-require */
+                const startApiServer = require('./src/lib/scratch-api-server');
+                startApiServer(8080);
+            } catch (err) {
+                console.error('Failed to start Scratch API Server:', err);
+            }
+        },
         contentBase: path.resolve(__dirname, 'build'),
         host: '0.0.0.0',
         disableHostCheck: true,
