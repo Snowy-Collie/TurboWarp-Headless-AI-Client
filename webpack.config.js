@@ -32,7 +32,15 @@ const base = {
     mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
     devtool: process.env.SOURCEMAP || (process.env.NODE_ENV === 'production' ? false : 'cheap-module-source-map'),
     devServer: {
-        before () {
+        before (app) {
+            try {
+                /* eslint-disable-next-line global-require */
+                const express = require('express');
+                app.use('/media', express.static(path.resolve(__dirname, 'node_modules/scratch-blocks/media')));
+            } catch (err) {
+                console.error('Failed to map /media static route in devServer:', err);
+            }
+
             try {
                 /* eslint-disable-next-line global-require */
                 const startApiServer = require('./src/lib/scratch-api-server');

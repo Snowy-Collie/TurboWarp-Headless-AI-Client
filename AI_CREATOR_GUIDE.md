@@ -173,11 +173,18 @@ All mathematical and logical operations **must** use prefix functional notation.
 - `operator.or(bool1, bool2)`
 - `operator.not(bool_val)`
 
+### 6.4 Looks.say Auto-Translation
+- `looks.say(message)`: Displays the speech bubble indefinitely.
+- `looks.say(message, seconds)`: Automatically translated during compilation to `looks.say_for_secs(message, seconds)` (e.g. `looks.say("Hello", 2)` compiles to `looks_sayforsecs`). Either version is fully supported.
+
 ---
 
 ## 7. Strict Explicit Scope Variable & List Operations
 
 To prevent scope collision bugs (e.g., when a global and local variable share the same name), generic variable/list commands are deprecated. You must always use the explicit scoped operations below:
+
+> [!TIP]
+> **Syntax Fault-Tolerance:** Dotted notation (`data.set_local_var`) is the standard syntax and must be preferred. However, the transpiler contains fault-tolerant checks that automatically convert underscore-based prefixes (e.g., `data_set_local_var(...)`) to standard dotted notation (`data.set_local_var(...)`) during compilation.
 
 ### 7.1 Global Variable Commands
 - `data.set_global_var(name, value)`

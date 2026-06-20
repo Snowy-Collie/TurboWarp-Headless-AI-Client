@@ -2,6 +2,24 @@
 // TurboWarp Pseudo-code Transpiler and Decompiler
 // Exposes compiler and decompiler to translate clean pseudo-code into target blocks and vice-versa.
 
+function normalizeOpcode (op) {
+    if (typeof op !== 'string') return op;
+    if (op.startsWith('data_')) {
+        const cmd = op.substring(5);
+        const dataCommands = [
+            'set_global_var', 'change_global_var', 'show_global_var', 'hide_global_var',
+            'set_local_var', 'change_local_var', 'show_local_var', 'hide_local_var',
+            'add_to_global_list', 'delete_of_global_list', 'delete_all_of_global_list', 'insert_at_global_list', 'replace_item_of_global_list', 'item_of_global_list', 'item_num_of_global_list', 'length_of_global_list', 'list_contains_global_item', 'show_global_list', 'hide_global_list',
+            'add_to_local_list', 'delete_of_local_list', 'delete_all_of_local_list', 'insert_at_local_list', 'replace_item_of_local_list', 'item_of_local_list', 'item_num_of_local_list', 'length_of_local_list', 'list_contains_local_item', 'show_local_list', 'hide_local_list',
+            'get_global_var', 'get_local_var', 'get_global_list', 'get_local_list'
+        ];
+        if (dataCommands.includes(cmd)) {
+            return `data.${cmd}`;
+        }
+    }
+    return op;
+}
+
 const BlockParams = {
     // Opcode -> array of { name: string, type: 'input'|'field', varType?: string }
     motion_movesteps: [{name: 'STEPS', type: 'input'}],
@@ -395,9 +413,13 @@ function parseExpression (str) {
 
     const parenIndex = str.indexOf('(');
     if (parenIndex !== -1 && str.endsWith(')')) {
-        const name = str.substring(0, parenIndex).trim();
+        let name = str.substring(0, parenIndex).trim();
         const innerStr = str.substring(parenIndex + 1, str.length - 1).trim();
         const args = parseArguments(innerStr);
+        name = normalizeOpcode(name);
+        if ((name === 'looks.say' || name === 'looks_say') && args.length === 2) {
+            name = 'looks_sayforsecs';
+        }
         return {type: 'call', opcode: name, args: args};
     }
 
@@ -465,6 +487,10 @@ function parsePseudoCode (code) {
         }
 
         const args = parseArguments(argsStr);
+        opcode = normalizeOpcode(opcode);
+        if ((opcode === 'looks.say' || opcode === 'looks_say') && args.length === 2) {
+            opcode = 'looks_sayforsecs';
+        }
         const node = new ParseNode(opcode, args, indent);
 
         while (stack.length > 0 && stack[stack.length - 1].indent >= indent) {
@@ -752,7 +778,7 @@ function compileExpression (expr, target, blocksObj, parentId) {
                 opcode: 'data_listcontents',
                 inputs: {},
                 fields: {
-                    LIST: {name: 'LIST', id: variable.id, value: variable.name}
+                    LIST: {name: 'LIST', id: variable.id, value: variable.name, variableType: 'list'}
                 },
                 next: null,
                 topLevel: false,
@@ -771,7 +797,7 @@ function compileExpression (expr, target, blocksObj, parentId) {
             opcode: 'data_variable',
             inputs: {},
             fields: {
-                VARIABLE: {name: 'VARIABLE', id: variable.id, value: variable.name}
+                VARIABLE: {name: 'VARIABLE', id: variable.id, value: variable.name, variableType: ''}
             },
             next: null,
             topLevel: false,
@@ -811,7 +837,7 @@ function compileExpression (expr, target, blocksObj, parentId) {
                 opcode: 'data_variable',
                 inputs: {},
                 fields: {
-                    VARIABLE: {name: 'VARIABLE', id: variable ? variable.id : name, value: name}
+                    VARIABLE: {name: 'VARIABLE', id: variable ? variable.id : name, value: name, variableType: ''}
                 },
                 next: null,
                 topLevel: false,
@@ -831,7 +857,7 @@ function compileExpression (expr, target, blocksObj, parentId) {
                 opcode: 'data_listcontents',
                 inputs: {},
                 fields: {
-                    LIST: {name: 'LIST', id: variable ? variable.id : name, value: name}
+                    LIST: {name: 'LIST', id: variable ? variable.id : name, value: name, variableType: 'list'}
                 },
                 next: null,
                 topLevel: false,
@@ -1145,7 +1171,8 @@ function compileBlockNode (node, target, blocksObj, parentId, isTopLevel, nextNo
                     block.fields[param.name] = {
                         name: param.name,
                         id: variable ? variable.id : name,
-                        value: name
+                        value: name,
+                        variableType: param.varType
                     };
                 } else {
                     block.fields[param.name] = {
