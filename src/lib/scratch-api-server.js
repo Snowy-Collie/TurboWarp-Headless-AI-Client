@@ -425,4 +425,10 @@ function startApiServer (port = 8080) {
     });
 }
 
+if (require.main === module) {
+    const defaultPort = process.env.PORT || 8080;
+    console.log(`[API Server] Running directly via CLI. Initializing server on port ${defaultPort}...`);
+    startApiServer(defaultPort);
+}
+
 module.exports = startApiServer;
