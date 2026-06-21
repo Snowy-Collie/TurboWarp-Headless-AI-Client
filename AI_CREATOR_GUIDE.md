@@ -341,3 +341,76 @@ The API server automatically manages a memory rollback history. To revert a targ
     "versionId": "v_17123456789_a3d2c"
   }
   ```
+
+---
+
+## 10. Multi-Window Workspace Orchestration (Electron Desktop Mode)
+
+In Electron Desktop mode, the workstation can host multiple independent TurboWarp editor windows concurrently. Each workspace window is isolated and tracked by a unique `Window_ID`.
+
+To interact with the environment, you must dynamically target specific windows by following this protocol:
+
+### 10.1 Querying Open Windows
+Send a `GET` request to `http://localhost:8080/api/windows` to discover the inventory of all open project windows:
+- **Response:**
+  ```json
+  [
+    {
+      "windowId": "Win_171891234_abcde",
+      "title": "Battlefield 2D Project",
+      "targets": [
+        {
+          "id": "sprite_id_1",
+          "name": "Player",
+          "isStage": false
+        }
+      ]
+    }
+  ]
+  ```
+
+### 10.2 Window-Targeted Operations
+Every API request can specify a target window using the `windowId` parameter. If omitted, the server will default to targeting the currently focused window or the single open workspace window (if only one exists). 
+
+To ensure stability across multi-project compilation, **always** specify the targeted `windowId`:
+
+1. **GET Environment State:**
+   - URL: `GET http://localhost:8080/environment?windowId=Win_171891234_abcde`
+2. **POST Mutate Code blocks:**
+   - URL: `POST http://localhost:8080/api/blocks` (or `/blocks`)
+   - Payload:
+     ```json
+     {
+       "windowId": "Win_171891234_abcde",
+       "targetId": "sprite_id_1",
+       "code": "@on_green_flag\n    motion.move_steps(10)"
+     }
+     ```
+3. **POST Create Sprite:**
+   - URL: `POST http://localhost:8080/api/create_sprite`
+   - Payload:
+     ```json
+     {
+       "windowId": "Win_171891234_abcde",
+       "name": "Projectile",
+       "canvasType": "circle",
+       "dimensions": { "radius": 5 }
+     }
+     ```
+4. **POST Rollback Workspace:**
+   - URL: `POST http://localhost:8080/api/rollback`
+   - Payload:
+     ```json
+     {
+       "windowId": "Win_171891234_abcde",
+       "targetId": "sprite_id_1"
+     }
+     ```
+5. **POST Control State (Run/Stop):**
+   - URL: `POST http://localhost:8080/run` or `POST http://localhost:8080/stop`
+   - Payload:
+     ```json
+     {
+       "windowId": "Win_171891234_abcde"
+     }
+     ```

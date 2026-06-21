@@ -12,61 +12,48 @@ function getHash (str) {
 function initTwAgentServerConnector (vm) {
     if (typeof window === 'undefined') return;
 
-    let socket = null;
-    let reconnectTimeout = null;
+    // Detect Electron environment
+    const electron = window.require ? window.require('electron') : null;
+    const ipcRenderer = electron ? electron.ipcRenderer : null;
 
-    function connect () {
-        if (socket) {
-            socket.close();
-        }
-
-        console.log('[TW Agent Connector] Connecting to API server...');
-        socket = new WebSocket('ws://localhost:8080/client');
-
-        socket.onopen = () => {
-            console.log('[TW Agent Connector] Connected to API server');
-            if (reconnectTimeout) {
-                clearTimeout(reconnectTimeout);
-                reconnectTimeout = null;
-            }
-        };
-
-        socket.onmessage = async event => {
-            let msg;
-            try {
-                msg = JSON.parse(event.data);
-            } catch (err) {
-                console.error('[TW Agent Connector] Failed to parse message:', err);
-                return;
-            }
-
-            console.log('[TW Agent Connector] Received message:', msg.type);
-
-            try {
-                await handleMessage(msg);
-            } catch (err) {
-                console.error('[TW Agent Connector] Error handling message:', err);
-                socket.send(JSON.stringify({
-                    id: msg.id,
-                    type: 'response',
-                    data: {success: false, error: err.message}
-                }));
-            }
-        };
-
-        socket.onclose = () => {
-            console.log('[TW Agent Connector] Connection closed. Retrying in 5 seconds...');
-            socket = null;
-            if (!reconnectTimeout) {
-                reconnectTimeout = setTimeout(connect, 5000);
-            }
-        };
-
-        socket.onerror = err => {
-            console.error('[TW Agent Connector] WebSocket error:', err);
-        };
+    if (!ipcRenderer) {
+        console.warn('[TW Agent Connector] Electron ipcRenderer not found. Running in standalone browser mode.');
+        return;
     }
 
+    // Determine Window ID
+    let windowId = window.Window_ID;
+    if (!windowId) {
+        const params = new URLSearchParams(window.location.search);
+        windowId = params.get('windowId') || 'Win_default';
+        window.Window_ID = windowId;
+    }
+
+    console.log(`[TW Agent Connector] Initializing with Window ID: ${windowId}`);
+
+    // Register active targets to main process to keep dashboard updated
+    const registerTargets = () => {
+        const targets = vm.runtime.targets.map(t => ({
+            id: t.id,
+            name: t.getName(),
+            isStage: t.isStage
+        }));
+        ipcRenderer.send('register-window-targets', {
+            windowId: windowId,
+            title: document.title || 'TurboWarp Workstation Window',
+            targets: targets
+        });
+    };
+
+    // Listen to Scratch runtime events to keep target lists in sync
+    vm.runtime.on('target_was_created', registerTargets);
+    vm.runtime.on('target_was_removed', registerTargets);
+    vm.runtime.on('PROJECT_LOADED', registerTargets);
+
+    // Initial delay registration
+    setTimeout(registerTargets, 1000);
+
+    // Handle messages received from Electron main process
     async function handleMessage (msg) {
         if (msg.type === 'get_environment') {
             const includeCode = msg.includeCode !== false && (!msg.data || msg.data.includeCode !== false);
@@ -112,16 +99,10 @@ function initTwAgentServerConnector (vm) {
             });
 
             const currentTarget = vm.editingTarget ? vm.editingTarget.id : null;
-
-            socket.send(JSON.stringify({
-                id: msg.id,
-                type: 'response',
-                data: {
-                    targets: targets,
-                    currentTarget: currentTarget
-                }
-            }));
-            return;
+            return {
+                targets: targets,
+                currentTarget: currentTarget
+            };
         }
 
         if (msg.type === 'get_sprite_code') {
@@ -141,15 +122,10 @@ function initTwAgentServerConnector (vm) {
                     }
                 }
             }
-            socket.send(JSON.stringify({
-                id: msg.id,
-                type: 'response',
-                data: {
-                    success: true,
-                    codes: codes
-                }
-            }));
-            return;
+            return {
+                success: true,
+                codes: codes
+            };
         }
 
         if (msg.type === 'create_sprite') {
@@ -228,16 +204,14 @@ function initTwAgentServerConnector (vm) {
             const targetId = newTarget ? newTarget.id : null;
             const finalName = newTarget ? newTarget.getName() : name;
 
-            socket.send(JSON.stringify({
-                id: msg.id,
-                type: 'response',
-                data: {
-                    success: true,
-                    targetId: targetId,
-                    name: finalName
-                }
-            }));
-            return;
+            // Trigger target registration to update dashboard with the new sprite
+            registerTargets();
+
+            return {
+                success: true,
+                targetId: targetId,
+                name: finalName
+            };
         }
 
         if (msg.type === 'update_blocks') {
@@ -248,52 +222,48 @@ function initTwAgentServerConnector (vm) {
                 throw new Error(`Target not found: ${targetId}`);
             }
 
-            // 1. Protection logic: Stop executing threads
             vm.runtime.stopAll();
-
-            // 2. Transpile and mutate target blocks
             compilePseudoCodeToTarget(code, target);
-
-            // 3. Emit workspace update to sync with ScratchBlocks/GUI
             vm.emitWorkspaceUpdate();
 
-            socket.send(JSON.stringify({
-                id: msg.id,
-                type: 'response',
-                data: {success: true}
-            }));
-            return;
+            // Refresh target list in dashboard
+            registerTargets();
+
+            return {success: true};
         }
 
         if (msg.type === 'stop_project') {
             vm.runtime.stopAll();
-            socket.send(JSON.stringify({
-                id: msg.id,
-                type: 'response',
-                data: {success: true}
-            }));
-            return;
+            return {success: true};
         }
 
         if (msg.type === 'run_project') {
             vm.greenFlag();
-            socket.send(JSON.stringify({
-                id: msg.id,
-                type: 'response',
-                data: {success: true}
-            }));
-            return;
+            return {success: true};
         }
 
-        // Unknown message type
-        socket.send(JSON.stringify({
-            id: msg.id,
-            type: 'response',
-            data: {success: false, error: `Unknown message type: ${msg.type}`}
-        }));
+        throw new Error(`Unknown message type: ${msg.type}`);
     }
 
-    connect();
+    // Subscribe to IPC messages from Main Process
+    ipcRenderer.on('ipc-action', async (event, msg) => {
+        console.log('[TW Agent Connector] Received IPC action:', msg.type);
+        try {
+            const resultData = await handleMessage(msg);
+            ipcRenderer.send('api-response', {
+                id: msg.id,
+                success: true,
+                data: resultData
+            });
+        } catch (err) {
+            console.error('[TW Agent Connector] Error handling message:', err);
+            ipcRenderer.send('api-response', {
+                id: msg.id,
+                success: false,
+                error: err.message
+            });
+        }
+    });
 }
 
 export default initTwAgentServerConnector;

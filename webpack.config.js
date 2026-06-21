@@ -40,14 +40,6 @@ const base = {
             } catch (err) {
                 console.error('Failed to map /media static route in devServer:', err);
             }
-
-            try {
-                /* eslint-disable-next-line global-require */
-                const startApiServer = require('./src/lib/scratch-api-server');
-                startApiServer(8080);
-            } catch (err) {
-                console.error('Failed to start Scratch API Server:', err);
-            }
         },
         contentBase: path.resolve(__dirname, 'build'),
         host: '0.0.0.0',
