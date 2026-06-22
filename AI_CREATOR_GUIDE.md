@@ -177,6 +177,16 @@ All mathematical and logical operations **must** use prefix functional notation.
 - `looks.say(message)`: Displays the speech bubble indefinitely.
 - `looks.say(message, seconds)`: Automatically translated during compilation to `looks.say_for_secs(message, seconds)` (e.g. `looks.say("Hello", 2)` compiles to `looks_sayforsecs`). Either version is fully supported.
 
+### 6.5 Blocks with Dropdown Selection Menus (Fields)
+When invoking blocks containing fixed dropdown menus (known as Fields), you **must** pass all parameters as uppercase keyword arguments. This prevents parameter hallucination and ensures correct type parsing.
+
+- **Example Statement Syntax:** `looks.set_effect_to(EFFECT="GHOST", VALUE=0)`
+- **Example Reporter Syntax:** `operator.mathop(NUM=10, OP="floor")`
+
+> [!IMPORTANT]
+> **HANDSHAKE OPTIONS INTROSPECTION NOTICE:**
+> Always consult the `options` dictionary returned within each block signature in the `GET /environment` payload before selecting parameters for math operations (e.g. `operator.mathop`), graphics/sound effects (e.g. `looks.set_effect_to`), and key sensing (e.g. `sensing.key_pressed`). Only choose values that exist in the defined options list.
+
 ---
 
 ## 7. Strict Explicit Scope Variable & List Operations

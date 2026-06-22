@@ -1,5 +1,5 @@
-/* eslint-disable require-jsdoc, func-style, no-use-before-define */
-import {compilePseudoCodeToTarget, decompileTargetBlocks} from './tw-agent-transpiler';
+import {compilePseudoCodeToTarget, decompileTargetBlocks, BlockParams} from './tw-agent-transpiler';
+
 
 function getHash (str) {
     let hash = 5381;
@@ -7,6 +7,160 @@ function getHash (str) {
         hash = (hash * 33) ^ str.charCodeAt(i);
     }
     return (hash >>> 0).toString(16);
+}
+
+function getBlockOptionsCatalog (vm) {
+    const catalog = {};
+    const broadcastMsgs = [];
+    if (vm.runtime && vm.runtime.targets) {
+        const messages = new Set();
+        for (const target of vm.runtime.targets) {
+            for (const variable of Object.values(target.variables)) {
+                if (variable.type === 'broadcast_msg') {
+                    messages.add(variable.name);
+                }
+            }
+        }
+        broadcastMsgs.push(...messages);
+    }
+
+    const coreOptions = {
+        looks_changeeffectby: {
+            EFFECT: ['COLOR', 'FISHEYE', 'WHIRL', 'PIXELATE', 'MOSAIC', 'BRIGHTNESS', 'GHOST']
+        },
+        looks_seteffectto: {
+            EFFECT: ['COLOR', 'FISHEYE', 'WHIRL', 'PIXELATE', 'MOSAIC', 'BRIGHTNESS', 'GHOST']
+        },
+        sound_changeeffectby: {
+            EFFECT: ['PITCH', 'PAN']
+        },
+        sound_seteffectto: {
+            EFFECT: ['PITCH', 'PAN']
+        },
+        motion_setrotationstyle: {
+            STYLE: ['left-right', "don't rotate", 'all around']
+        },
+        looks_gotofrontback: {
+            FRONT_BACK: ['front', 'back']
+        },
+        looks_goforwardbackwardlayers: {
+            FORWARD_BACKWARD: ['forward', 'backward']
+        },
+        event_whengreaterthan: {
+            WHATEVER: ['LOUDNESS', 'TIMER']
+        },
+        control_stop: {
+            STOP_OPTION: ['all', 'this script', 'other scripts in sprite']
+        },
+        sensing_current: {
+            CURRENTMENU: ['YEAR', 'MONTH', 'DATE', 'DAYOFWEEK', 'HOUR', 'MINUTE', 'SECOND']
+        },
+        operator_mathop: {
+            OPERATOR: ['abs', 'floor', 'ceiling', 'sqrt', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'ln', 'log', 'e ^', '10 ^']
+        },
+        event_whenkeypressed: {
+            KEY_OPTION: ['space', 'up arrow', 'down arrow', 'right arrow', 'left arrow', 'any', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+        },
+        sensing_keypressed: {
+            KEY_OPTION: ['space', 'up arrow', 'down arrow', 'right arrow', 'left arrow', 'any', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+        },
+        event_whenbroadcastreceived: {
+            BROADCAST_OPTION: broadcastMsgs
+        },
+        event_broadcast: {
+            BROADCAST_INPUT: broadcastMsgs
+        },
+        event_broadcastandwait: {
+            BROADCAST_INPUT: broadcastMsgs
+        }
+    };
+
+    for (const [opcode, params] of Object.entries(BlockParams)) {
+        catalog[opcode] = {
+            opcode: opcode,
+            params: params,
+            args: params,
+            options: coreOptions[opcode] || {}
+        };
+    }
+
+    if (vm.runtime && vm.runtime._blockInfo) {
+        for (const category of vm.runtime._blockInfo) {
+            const catId = category.id;
+            const menuInfoMap = category.menuInfo || {};
+            const blocks = category.blocks || [];
+            
+            for (const block of blocks) {
+                if (!block.info || !block.info.opcode) continue;
+                const opcode = `${catId}_${block.info.opcode}`;
+                
+                let params = catalog[opcode] ? catalog[opcode].params : null;
+                if (!params) {
+                    const text = block.info.text || '';
+                    const regex = /\[([^\]]+)\]/g;
+                    const argNames = [];
+                    let match;
+                    while ((match = regex.exec(text)) !== null) {
+                        argNames.push(match[1]);
+                    }
+                    params = argNames.map(name => {
+                        const argMeta = block.info.arguments && block.info.arguments[name];
+                        const isField = argMeta && argMeta.menu &&
+                            (!category.menuInfo || !category.menuInfo[argMeta.menu] ||
+                            !category.menuInfo[argMeta.menu].acceptReporters);
+                        return {
+                            name: name,
+                            type: isField ? 'field' : 'input',
+                            varType: argMeta ? argMeta.type : undefined
+                        };
+                    });
+                }
+                
+                const options = {};
+                if (block.info.arguments) {
+                    for (const [argName, argMeta] of Object.entries(block.info.arguments)) {
+                        if (argMeta && argMeta.menu) {
+                            const menuInfo = menuInfoMap[argMeta.menu];
+                            if (menuInfo && menuInfo.items) {
+                                let items = [];
+                                if (Array.isArray(menuInfo.items)) {
+                                    items = menuInfo.items;
+                                } else if (typeof menuInfo.items === 'function') {
+                                    try {
+                                        items = menuInfo.items.call(category);
+                                    } catch (e) {
+                                        // ignore
+                                    }
+                                }
+                                
+                                if (Array.isArray(items)) {
+                                    options[argName] = items.map(item => {
+                                        if (typeof item === 'string' || typeof item === 'number') {
+                                            return String(item);
+                                        }
+                                        if (item && typeof item === 'object') {
+                                            return String(item.value !== undefined ? item.value : item.text);
+                                        }
+                                        return String(item);
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                const existingOptions = catalog[opcode] ? catalog[opcode].options : {};
+                catalog[opcode] = {
+                    opcode: opcode,
+                    params: params,
+                    args: params,
+                    options: Object.assign({}, existingOptions, options)
+                };
+            }
+        }
+    }
+
+    return catalog;
 }
 
 function initTwAgentServerConnector (vm) {
@@ -101,7 +255,8 @@ function initTwAgentServerConnector (vm) {
             const currentTarget = vm.editingTarget ? vm.editingTarget.id : null;
             return {
                 targets: targets,
-                currentTarget: currentTarget
+                currentTarget: currentTarget,
+                blocks: getBlockOptionsCatalog(vm)
             };
         }
 
@@ -135,9 +290,9 @@ function initTwAgentServerConnector (vm) {
             let rotationCenterY = 0.5;
 
             if (canvasType === 'empty') {
-                svgString = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
-                rotationCenterX = 0.5;
-                rotationCenterY = 0.5;
+                svgString = '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"></svg>';
+                rotationCenterX = 15;
+                rotationCenterY = 15;
             } else if (canvasType === 'circle') {
                 const r = (dimensions && dimensions.radius) || 20;
                 const diameter = r * 2;
@@ -201,7 +356,11 @@ function initTwAgentServerConnector (vm) {
                 currentCostumeIndex: 0,
                 scratchX: 0,
                 scratchY: 0,
+                x: 0,
+                y: 0,
+                size: 100,
                 scale: 100,
+                volume: 100,
                 direction: 90,
                 rotationStyle: 'normal',
                 isDraggable: false,

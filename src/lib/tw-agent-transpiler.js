@@ -395,6 +395,43 @@ function parseExpression (str) {
     str = str.trim();
     if (!str) return null;
 
+    // Check for keyword argument NAME=VALUE at depth 0
+    let eqIndex = -1;
+    let depth = 0;
+    let inQuote = false;
+    let quoteChar = null;
+    for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        if (inQuote) {
+            if (char === quoteChar && str[i - 1] !== '\\') {
+                inQuote = false;
+            }
+        } else if (char === '"' || char === "'") {
+            inQuote = true;
+            quoteChar = char;
+        } else if (char === '(') {
+            depth++;
+        } else if (char === ')') {
+            depth--;
+        } else if (char === '=' && depth === 0) {
+            eqIndex = i;
+            break;
+        }
+    }
+
+    if (eqIndex !== -1) {
+        const key = str.substring(0, eqIndex).trim();
+        const valStr = str.substring(eqIndex + 1).trim();
+        if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+            const valNode = parseExpression(valStr);
+            return {
+                type: 'keyword_arg',
+                name: key,
+                value: valNode
+            };
+        }
+    }
+
     if ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'"))) {
         return {type: 'string', value: str.substring(1, str.length - 1)};
     }
@@ -1158,52 +1195,100 @@ function compileBlockNode (node, target, blocksObj, parentId, isTopLevel, nextNo
     blocksObj[blockId] = block;
 
     const params = getBlockParams(opcode, target) || [];
-    for (let i = 0; i < nodeArgs.length; i++) {
-        const arg = nodeArgs[i];
-        if (!arg) continue;
+    const mappedParams = new Set();
+    const argMap = new Map();
 
-        const param = params[i];
-        if (param) {
-            if (param.type === 'field') {
-                if (typeof param.varType === 'string') {
-                    const name = arg.value || arg.name;
-                    const variable = lookupOrCreateVariable(target, name, param.varType, forceGlobal);
-                    block.fields[param.name] = {
-                        name: param.name,
-                        id: variable ? variable.id : name,
-                        value: name,
-                        variableType: param.varType
-                    };
-                } else {
-                    block.fields[param.name] = {
-                        name: param.name,
-                        value: String(arg.value === (void 0) ? arg.name : arg.value)
-                    };
-                }
+    // 1. Map keyword arguments
+    nodeArgs.forEach(arg => {
+        if (arg && arg.type === 'keyword_arg') {
+            let argName = arg.name;
+            if (opcode === 'operator_mathop' && argName.toUpperCase() === 'OP') {
+                argName = 'OPERATOR';
+            }
+            const param = params.find(p => p.name.toUpperCase() === argName.toUpperCase());
+            if (param) {
+                argMap.set(param.name, arg.value);
+                mappedParams.add(param.name);
+            }
+        }
+    });
+
+    // 2. Map positional arguments
+    let paramIdx = 0;
+    nodeArgs.forEach(arg => {
+        if (arg && arg.type !== 'keyword_arg') {
+            while (paramIdx < params.length && mappedParams.has(params[paramIdx].name)) {
+                paramIdx++;
+            }
+            if (paramIdx < params.length) {
+                const param = params[paramIdx];
+                argMap.set(param.name, arg);
+                mappedParams.add(param.name);
+                paramIdx++;
+            }
+        }
+    });
+
+    // 3. Compile mapped parameters
+    params.forEach(param => {
+        const arg = argMap.get(param.name);
+        if (!arg) return;
+
+        if (param.type === 'field') {
+            if (typeof param.varType === 'string') {
+                const name = arg.value || arg.name;
+                const variable = lookupOrCreateVariable(target, name, param.varType, forceGlobal);
+                block.fields[param.name] = {
+                    name: param.name,
+                    id: variable ? variable.id : name,
+                    value: name,
+                    variableType: param.varType
+                };
             } else {
-                const inputBlockId = compileExpression(arg, target, blocksObj, blockId);
-                if (inputBlockId) {
-                    const shadow = blocksObj[inputBlockId].shadow ? inputBlockId : null;
-                    block.inputs[param.name] = {
-                        name: param.name,
-                        block: inputBlockId,
-                        shadow: shadow
-                    };
-                }
+                block.fields[param.name] = {
+                    name: param.name,
+                    value: String(arg.value === (void 0) ? arg.name : arg.value)
+                };
             }
         } else {
-            const inputName = `ARG${i}`;
             const inputBlockId = compileExpression(arg, target, blocksObj, blockId);
             if (inputBlockId) {
                 const shadow = blocksObj[inputBlockId].shadow ? inputBlockId : null;
-                block.inputs[inputName] = {
-                    name: inputName,
+                block.inputs[param.name] = {
+                    name: param.name,
                     block: inputBlockId,
                     shadow: shadow
                 };
             }
         }
-    }
+    });
+
+    // 4. Map remaining unmapped positional arguments to ARG{extraIdx}
+    let extraIdx = 0;
+    nodeArgs.forEach(arg => {
+        if (arg && arg.type !== 'keyword_arg') {
+            let alreadyMapped = false;
+            for (const [pName, mappedNode] of argMap.entries()) {
+                if (mappedNode === arg) {
+                    alreadyMapped = true;
+                    break;
+                }
+            }
+            if (!alreadyMapped) {
+                const inputName = `ARG${extraIdx}`;
+                const inputBlockId = compileExpression(arg, target, blocksObj, blockId);
+                if (inputBlockId) {
+                    const shadow = blocksObj[inputBlockId].shadow ? inputBlockId : null;
+                    block.inputs[inputName] = {
+                        name: inputName,
+                        block: inputBlockId,
+                        shadow: shadow
+                    };
+                }
+                extraIdx++;
+            }
+        }
+    });
 
     if (node.children.length > 0) {
         const substackFirstNode = node.children[0];
@@ -1364,12 +1449,24 @@ function decompileReporterBlock (rBlockId, target) {
 
     const rParams = getBlockParams(rBlock.opcode, target) || [];
     const rArgs = [];
+    const hasField = rParams.some(p => p.type === 'field' && p.varType !== '' && p.varType !== 'list');
     
     rParams.forEach(p => {
+        let valStr = '""';
         if (p.type === 'field') {
-            rArgs.push(rBlock.fields[p.name] ? JSON.stringify(rBlock.fields[p.name].value) : '""');
+            valStr = rBlock.fields[p.name] ? JSON.stringify(rBlock.fields[p.name].value) : '""';
         } else {
-            rArgs.push(decompileValue(rBlock.inputs[p.name], target));
+            valStr = decompileValue(rBlock.inputs[p.name], target);
+        }
+        
+        if (hasField) {
+            let pName = p.name;
+            if (rBlock.opcode === 'operator_mathop' && pName === 'OPERATOR') {
+                pName = 'OP';
+            }
+            rArgs.push(`${pName}=${valStr}`);
+        } else {
+            rArgs.push(valStr);
         }
     });
 
@@ -1438,13 +1535,25 @@ function decompileBlock (blockId, target, indentLevel) {
 
     const params = getBlockParams(opcode, target) || [];
     const args = [];
+    const hasField = params.some(p => p.type === 'field' && p.varType !== '' && p.varType !== 'list');
     
     params.forEach(p => {
+        let valStr = '""';
         if (p.type === 'field') {
             const fld = block.fields[p.name];
-            args.push(fld ? JSON.stringify(fld.value) : '""');
+            valStr = fld ? JSON.stringify(fld.value) : '""';
         } else {
-            args.push(decompileValue(block.inputs[p.name], target));
+            valStr = decompileValue(block.inputs[p.name], target);
+        }
+        
+        if (hasField) {
+            let pName = p.name;
+            if (opcode === 'operator_mathop' && pName === 'OPERATOR') {
+                pName = 'OP';
+            }
+            args.push(`${pName}=${valStr}`);
+        } else {
+            args.push(valStr);
         }
     });
 
@@ -1607,5 +1716,6 @@ function decompileTargetBlocks (target) {
 export {
     parsePseudoCode,
     compilePseudoCodeToTarget,
-    decompileTargetBlocks
+    decompileTargetBlocks,
+    BlockParams
 };
