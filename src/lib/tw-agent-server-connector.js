@@ -165,12 +165,25 @@ function initTwAgentServerConnector (vm) {
                 true
             );
 
-            await storage.store(
-                asset.assetType,
-                asset.dataFormat,
-                asset.data,
-                asset.assetId
-            );
+            try {
+                await storage.store(
+                    asset.assetType,
+                    asset.dataFormat,
+                    asset.data,
+                    asset.assetId
+                );
+            } catch (storeErr) {
+                console.warn(
+                    '[TW Agent Connector] storage.store failed, falling back to builtinHelper:',
+                    storeErr
+                );
+                storage.builtinHelper._store(
+                    asset.assetType,
+                    asset.dataFormat,
+                    asset.data,
+                    asset.assetId
+                );
+            }
 
             const spriteJSON = {
                 objName: name,
